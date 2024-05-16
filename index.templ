@@ -1,0 +1,74 @@
+package main
+
+import "strconv"
+
+templ index(page Page) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<script src="https://unpkg.com/htmx.org/dist/htmx.min.js"></script>
+			<link rel="stylesheet" href="/css/index.css"/>
+		</head>
+		<body>
+			@form(page.Form)
+			<hr/>
+			@display(page.ContactList)
+			<script>
+            document.addEventListener("DOMContentLoaded", (event) => {
+                document.body.addEventListener("htmx:beforeSwap", (evt) => {
+                    if (evt.detail.xhr.status === 422) {
+                        evt.detail.shouldSwap = true;
+                        evt.detail.isError = false;
+                    }
+                });
+            });
+        	</script>
+		</body>
+	</html>
+}
+
+templ form(formData FormData) {
+	<form hx-swap="outerHTML" hx-post="/contacts">
+		name: <input value={ formData.Name } type="text" name="name"/>
+		email: <input value={ formData.Email } type="text" name="email"/>
+		for _, e := range formData.Errors {
+			<div style="color:red">{ e }</div>
+		}
+		<button type="submit">Create Contact</button>
+	</form>
+}
+
+templ display(contactList ContactList) {
+	<div id="contacts" style="display:flex;flex-direction:column">
+		for _, c := range contactList.Contacts {
+			@contact(c, strconv.Itoa(c.Id))
+		}
+	</div>
+}
+
+templ contact(c Contact, id string) {
+	<div class="contact" id={ "contact-" + id } style="display:flex">
+		<div
+			hx-indicator={ "#ci-" + id }
+			hx-target={ "#contact-" + id }
+			hx-swap="outerHTML swap:500ms"
+			hx-delete={ "/contacts/" + id }
+			style="width:1rem;cursor:pointer"
+		>
+			<img src="/images/trash.svg" alt="Delete"/>
+		</div>
+		Name: <span>{ c.Name }</span>
+		Email: <span>{ c.Email }</span>
+		<div id={ "ci-" + id } class="htmx-indicator">
+			<img src="/images/bars.svg" alt="loading" style="width:1rem"/>
+		</div>
+	</div>
+}
+
+templ oobContact(c Contact) {
+	<div id="contacts" hx-swap-oob="afterbegin">
+		@contact(c, strconv.Itoa(c.Id))
+	</div>
+}

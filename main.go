@@ -1,29 +1,27 @@
 package main
 
 import (
-	"html/template"
-	"io"
+	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/a-h/templ"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 )
 
-// Contains html templates.
-type Templates struct {
-	templates *template.Template
+// Contains fields and errors for a new contact form.
+type FormData struct {
+	Name   string
+	Email  string
+	Errors []string
 }
 
-// Used by an echo instance to send html responses.
-func (t *Templates) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
-	return t.templates.ExecuteTemplate(w, name, data)
-}
-
-// Creates a new set of templates parsed from html files.
-func newTemplate() *Templates {
-	return &Templates{
-		templates: template.Must(template.ParseGlob("views/*.html")),
+// Creates a new form data object.
+func newFormData() FormData {
+	return FormData{
+		Name:   "",
+		Email:  "",
+		Errors: []string{},
 	}
 }
 
@@ -34,7 +32,7 @@ type Contact struct {
 	Id    int
 }
 
-// Creates a new contact.
+// Creates a new contact object.
 func newContact(name, email string, id int) Contact {
 	return Contact{
 		Name:  name,
@@ -102,68 +100,64 @@ func (d *ContactList) indexOf(id int) int {
 	return -1
 }
 
-// Contains key-value maps of form fields and form values, and any associated errors with those fields.
-type FormData struct {
-	Values map[string]string
-	Errors map[string]string
-}
-
-// Initializes a new, empty set of form value maps and error maps.
-func newFormData() FormData {
-	return FormData{
-		Values: make(map[string]string),
-		Errors: make(map[string]string),
-	}
-}
-
 // Wrapper type for all related data for the page.
 type Page struct {
-	Data ContactList
-	Form FormData
+	Form        FormData
+	ContactList ContactList
 }
 
 // Creates a new page object.
 func newPage() Page {
 	return Page{
-		Data: newData(),
-		Form: newFormData(),
+		Form:        newFormData(),
+		ContactList: newData(),
 	}
 }
 
-// Entry point for the web app.
+// Renders a templ component onto an echo context.
+func Render(ctx echo.Context, statusCode int, t templ.Component) error {
+	buf := templ.GetBuffer()
+	defer templ.ReleaseBuffer(buf)
+
+	if err := t.Render(ctx.Request().Context(), buf); err != nil {
+		return err
+	}
+
+	return ctx.HTML(statusCode, buf.String())
+}
+
+// Entry point for the web server.
 func main() {
 	e := echo.New()
-	e.Renderer = newTemplate()
-	e.Use(middleware.Logger())
 	e.Static("/images", "images")
 	e.Static("/css", "css")
 
 	page := newPage()
 
 	e.GET("/", func(c echo.Context) error {
-		return c.Render(200, "index", page)
+		return Render(c, http.StatusOK, index(page))
 	})
 
 	e.POST("/contacts", func(c echo.Context) error {
 		name := c.FormValue("name")
 		email := c.FormValue("email")
 
-		if page.Data.hasEmail(email) {
+		if page.ContactList.hasEmail(email) {
 			formData := newFormData()
-			formData.Values["name"] = name
-			formData.Values["email"] = email
-			formData.Errors["email"] = "Email already exists"
-			return c.Render(422, "form", formData)
+			formData.Name = name
+			formData.Email = email
+			formData.Errors = append(formData.Errors, "Email already exists")
+			return Render(c, http.StatusUnprocessableEntity, form(formData))
 		}
 
-		contact := page.Data.addContact(name, email)
+		contact := page.ContactList.addContact(name, email)
 
-		err := c.Render(200, "form", newFormData())
+		err := Render(c, http.StatusOK, form(newFormData()))
 		if err != nil {
 			return err
 		}
 
-		return c.Render(200, "oob-contact", contact)
+		return Render(c, http.StatusOK, oobContact(contact))
 	})
 
 	e.DELETE("/contacts/:id", func(c echo.Context) error {
@@ -172,15 +166,15 @@ func main() {
 
 		id, err := strconv.Atoi(c.Param("id"))
 		if err != nil {
-			return c.String(400, "Invalid id")
+			return c.String(http.StatusBadRequest, "Invalid id")
 		}
 
-		success := page.Data.removeContact(id)
+		success := page.ContactList.removeContact(id)
 		if !success {
-			return c.String(404, "Contact not found")
+			return c.String(http.StatusNotFound, "Contact not found")
 		}
 
-		return c.NoContent(200)
+		return c.NoContent(http.StatusOK)
 	})
 
 	e.Logger.Fatal((e.Start(":3000")))
